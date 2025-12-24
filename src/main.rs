@@ -124,8 +124,11 @@ fn generate_kalshi_slug(target_time: DateTime<chrono_tz::Tz>, coin: &str) -> Str
 }
 
 fn get_current_market_info(coin: &str) -> (String, String, DateTime<Utc>) {
-    let now = Utc::now();
-    let target_time = now
+    // Get current time in Eastern Time first (since markets are based on ET)
+    let now_et = Utc::now().with_timezone(&New_York);
+
+    // Round to current hour in ET
+    let target_time_et = now_et
         .with_minute(0)
         .unwrap()
         .with_second(0)
@@ -133,13 +136,17 @@ fn get_current_market_info(coin: &str) -> (String, String, DateTime<Utc>) {
         .with_nanosecond(0)
         .unwrap();
 
-    let et_time = target_time.with_timezone(&New_York);
-    let polymarket_slug = generate_polymarket_slug(et_time, coin);
+    // Polymarket uses the current ET hour
+    let polymarket_slug = generate_polymarket_slug(target_time_et, coin);
 
-    let kalshi_target_time = (target_time + Duration::hours(1)).with_timezone(&New_York);
-    let kalshi_slug = generate_kalshi_slug(kalshi_target_time, coin);
+    // Kalshi uses the next ET hour
+    let kalshi_target_time_et = target_time_et + Duration::hours(1);
+    let kalshi_slug = generate_kalshi_slug(kalshi_target_time_et, coin);
 
-    (polymarket_slug, kalshi_slug, target_time)
+    // Convert the ET time back to UTC for Binance API calls
+    let target_time_utc = target_time_et.with_timezone(&Utc);
+
+    (polymarket_slug, kalshi_slug, target_time_utc)
 }
 
 async fn get_clob_price(client: &reqwest::Client, token_id: &str) -> anyhow::Result<f64> {
@@ -501,15 +508,17 @@ fn log_arbitrage_opportunity(opportunity: &ArbitrageCheck, coin: &str, timestamp
 }
 
 async fn check_arbitrage(client: &reqwest::Client, last_hour: &mut i32) -> anyhow::Result<()> {
-    let now = Utc::now();
-    let current_hour = now.hour() as i32;
-    let timestamp = now.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+    let now_utc = Utc::now();
+    let now_et = now_utc.with_timezone(&New_York);
+    let current_hour = now_et.hour() as i32;
+    let timestamp = now_utc.format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
-    // Detect hour change
+    // Detect hour change (based on ET time since markets are ET-based)
     if *last_hour != current_hour {
         println!("\n{}", "=".repeat(80));
         println!("HOUR CHANGED: Switching to new markets");
-        println!("Previous hour: {}, Current hour: {}", last_hour, current_hour);
+        println!("Previous hour: {} ET, Current hour: {} ET", last_hour, current_hour);
+        println!("Current time: {} ET", now_et.format("%Y-%m-%d %H:%M:%S %Z"));
 
         // Show the new market slugs
         let (btc_poly_slug, btc_kalshi_slug, _) = get_current_market_info("BTC");
@@ -522,7 +531,7 @@ async fn check_arbitrage(client: &reqwest::Client, last_hour: &mut i32) -> anyho
         *last_hour = current_hour;
     }
 
-    println!("[{}] Scanning for arbitrage...", now.format("%H:%M:%S"));
+    println!("[{} ET] Scanning for arbitrage...", now_et.format("%H:%M:%S"));
 
     // Fetch BTC data
     let btc_poly = fetch_polymarket_data_struct(client, "BTC").await;
@@ -608,12 +617,16 @@ async fn main() {
     println!("Press Ctrl+C to stop.\n");
 
     let client = reqwest::Client::new();
-    let mut last_hour = Utc::now().hour() as i32;
+
+    // Initialize with current ET hour
+    let now_et = Utc::now().with_timezone(&New_York);
+    let mut last_hour = now_et.hour() as i32;
 
     // Display initial markets
     let (btc_poly_slug, btc_kalshi_slug, _) = get_current_market_info("BTC");
     let (eth_poly_slug, eth_kalshi_slug, _) = get_current_market_info("ETH");
-    println!("Initial Markets:");
+    println!("Current time: {} ET", now_et.format("%Y-%m-%d %H:%M:%S %Z"));
+    println!("\nInitial Markets:");
     println!("  BTC Polymarket: {}", btc_poly_slug);
     println!("  BTC Kalshi: {}", btc_kalshi_slug);
     println!("  ETH Polymarket: {}", eth_poly_slug);
