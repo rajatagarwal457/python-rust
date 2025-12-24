@@ -500,9 +500,29 @@ fn log_arbitrage_opportunity(opportunity: &ArbitrageCheck, coin: &str, timestamp
     }
 }
 
-async fn check_arbitrage(client: &reqwest::Client) -> anyhow::Result<()> {
-    let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
-    println!("[{}] Scanning for arbitrage...", Utc::now().format("%H:%M:%S"));
+async fn check_arbitrage(client: &reqwest::Client, last_hour: &mut i32) -> anyhow::Result<()> {
+    let now = Utc::now();
+    let current_hour = now.hour() as i32;
+    let timestamp = now.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+
+    // Detect hour change
+    if *last_hour != current_hour {
+        println!("\n{}", "=".repeat(80));
+        println!("HOUR CHANGED: Switching to new markets");
+        println!("Previous hour: {}, Current hour: {}", last_hour, current_hour);
+
+        // Show the new market slugs
+        let (btc_poly_slug, btc_kalshi_slug, _) = get_current_market_info("BTC");
+        let (eth_poly_slug, eth_kalshi_slug, _) = get_current_market_info("ETH");
+        println!("BTC Polymarket: {}", btc_poly_slug);
+        println!("BTC Kalshi: {}", btc_kalshi_slug);
+        println!("ETH Polymarket: {}", eth_poly_slug);
+        println!("ETH Kalshi: {}", eth_kalshi_slug);
+        println!("{}\n", "=".repeat(80));
+        *last_hour = current_hour;
+    }
+
+    println!("[{}] Scanning for arbitrage...", now.format("%H:%M:%S"));
 
     // Fetch BTC data
     let btc_poly = fetch_polymarket_data_struct(client, "BTC").await;
@@ -588,9 +608,20 @@ async fn main() {
     println!("Press Ctrl+C to stop.\n");
 
     let client = reqwest::Client::new();
+    let mut last_hour = Utc::now().hour() as i32;
+
+    // Display initial markets
+    let (btc_poly_slug, btc_kalshi_slug, _) = get_current_market_info("BTC");
+    let (eth_poly_slug, eth_kalshi_slug, _) = get_current_market_info("ETH");
+    println!("Initial Markets:");
+    println!("  BTC Polymarket: {}", btc_poly_slug);
+    println!("  BTC Kalshi: {}", btc_kalshi_slug);
+    println!("  ETH Polymarket: {}", eth_poly_slug);
+    println!("  ETH Kalshi: {}", eth_kalshi_slug);
+    println!();
 
     loop {
-        if let Err(e) = check_arbitrage(&client).await {
+        if let Err(e) = check_arbitrage(&client, &mut last_hour).await {
             eprintln!("Error: {}", e);
         }
 
